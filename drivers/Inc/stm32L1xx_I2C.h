@@ -26,8 +26,16 @@ typedef struct
  */
 typedef struct
 {
-	I2C_RegDef_t *pI2Cx;
-	I2C_Config_t I2C_Config;
+	I2C_RegDef_t 	*pI2Cx;
+	I2C_Config_t 	I2C_Config;
+	uint8_t 		*pTxBuffer;	/*To store the app. Tx buffer address*/
+	uint8_t 		*pRxBuffer;	/*To store the app. Rx buffer address*/
+	uint32_t 		TxLen;		/*To store the Tx Len*/
+	uint32_t 		RxLen;		/*To store the Rx Len*/
+	uint8_t 		TxRxState;	/*To store the communication state*/
+	uint8_t 		DevAddr;	/*To store the slave/device address*/
+	uint32_t 		RxSize;		/*To store the Rx size*/ /*FIXME suspect this RxSize might not be needed*/
+	uint8_t 		RepeatStart;/*To store the repeated start value*/
 }I2C_Handle_t;
 
 /*
@@ -58,13 +66,36 @@ typedef struct
 #define I2C_FLAG_STOPF					(1 << I2C_SR1_STOPF)
 #define I2C_FLAG_RXNE					(1 << I2C_SR1_RXNE)
 #define I2C_FLAG_TXE					(1 << I2C_SR1_TXE)
-#define I2C_FLAG_FLAG_BERR					(1 << I2C_SR1_BERR)
+#define I2C_FLAG_FLAG_BERR				(1 << I2C_SR1_BERR)
 #define I2C_FLAG_ARLO					(1 << I2C_SR1_ARLO)
 #define I2C_FLAG_AF						(1 << I2C_SR1_AF)
 #define I2C_FLAG_OVR					(1 << I2C_SR1_OVR)
 #define I2C_FLAG_PECERR					(1 << I2C_SR1_PECERR)
 #define I2C_FLAG_TIMEOUT				(1 << I2C_SR1_TIMEOUT)
 #define I2C_FLAG_SMBALERT				(1 << I2C_SR1_SMBALERT)
+
+/*
+ * I2C application state
+ */
+#define I2C_READY						0u
+#define I2C_BUSY_IN_RX					1u
+#define I2C_BUSY_IN_TX					2u
+
+/*
+ * I2C application events
+ */
+#define I2C_EV_TX_DONE					0u
+#define I2C_EV_RX_DONE					1u
+#define I2C_EV_STOP						2u
+
+/*
+ * I2C application error event
+ */
+#define I2C_ERROR_BERR  				3u
+#define I2C_ERROR_ARLO  				4u
+#define I2C_ERROR_AF    				5u
+#define I2C_ERROR_OVR   				6u
+#define I2C_ERROR_TIMEOUT 				7u
 
 /********************************************************************************************
  * 									I2C Driver API's
@@ -99,6 +130,20 @@ void I2C_PeriClockControl(I2C_RegDef_t *pI2Cx, uint8_t EnOrDi);
 void I2C_MasterSendData(I2C_Handle_t *pI2CHandle, uint8_t *pTxBuffer, uint32_t Length, uint8_t SlaveAddr, uint8_t RepeatStart);
 
 /*
+ * Function	: To Generate start condition
+ * Param	: Pointer to I2Cx base address
+ * Return	: None
+ */
+void I2C_GenerateStartCondition(I2C_RegDef_t *pI2Cx);
+
+/*
+ * Function	: To Generate stop condition
+ * Param	: Pointer to I2Cx base address
+ * Return	: None
+ */
+void I2C_GenerateStopCondition(I2C_RegDef_t *pI2Cx);
+
+/*
  * Function	: To receive data through I2C peripheral in master mode
  * Param	: Pointer to I2Cx handle structure, Pointer to data buffer, Data length, slave address, repeated start
  * Return	: None
@@ -107,17 +152,17 @@ void I2C_MasterReceiveData(I2C_Handle_t *pI2CHandle, uint8_t *pRxBuffer, uint32_
 
 /*
  * Function	: To send data through I2C peripheral in interrupt mode
- * Param	:
- * Return	:
+ * Param	: Pointer to I2Cx handle structure, Pointer to data buffer, Data length, slave address, repeated start
+ * Return	: I2C state (Busy in Tx or Busy in Rx or Ready)
  */
-
+uint8_t I2C_MasterSendDataIT(I2C_Handle_t *pI2CHandle, uint8_t *pTxBuffer, uint32_t Length, uint8_t SlaveAddr, uint8_t RepeatStart);
 
 /*
  * Function	: To receive data through I2C peripheral in interrupt mode
- * Param	:
- * Return	:
+ * Param	: Pointer to I2Cx handle structure, Pointer to data buffer, Data length, slave address, repeated start
+ * Return	: I2C state (Busy in Tx or Busy in Rx or Ready)
  */
-
+uint8_t I2C_MasterReceiveDataIT(I2C_Handle_t *pI2CHandle, uint8_t *pRxBuffer, uint32_t Length, uint8_t SlaveAddr, uint8_t RepeatStart);
 
 /*
  * Function	: To configure interrupt priority
@@ -134,11 +179,46 @@ void I2C_IRQPriorityConfig(uint8_t IRQNumber, uint32_t IRQPriority);
 void I2C_IRQInterruptConfig(uint8_t IRQNumber, uint8_t EnOrDi);
 
 /*
+ * Function	: Interrupt handler for I2C event
+ * Param	: Pointer to I2Cx handle structure
+ * Return	: None
+ */
+void I2C_EV_IRQHandler(I2C_Handle_t *pI2CHandle);
+
+/*
+ * Function	: Interrupt handler for I2C error
+ * Param	: Pointer to I2Cx handle structure
+ * Return	: None
+ */
+void I2C_ER_IRQHandler(I2C_Handle_t *pI2CHandle);
+
+/*
  * Function	: This function gets the status of the passed I2C flag
  * Param	: Pointer to I2Cx base address, Flag mask value
  * Return	: SET or RESET
  */
 uint8_t I2C_GetFlagStatus(I2C_RegDef_t *pI2Cx, uint32_t FlagName);
+
+/*
+ * Function	: This function disables or enables acking
+ * Param	: Pointer to I2Cx base address, Enable or Disable
+ * Return	: None
+ */
+void I2C_AckControl(I2C_RegDef_t *pI2Cx, uint8_t EnOrDi);
+
+/*
+ * Function	: Reset the I2C handle structure and close the transmission
+ * Param	: Pointer to I2Cx handle structure
+ * Return	: None
+ */
+void I2C_CloseSendData(I2C_Handle_t *pI2CHandle);
+
+/*
+ * Function	: Reset the I2C handle structure and close the reception
+ * Param	: Pointer to I2Cx handle structure
+ * Return	: None
+ */
+void I2C_CloseReceiveData(I2C_Handle_t *pI2CHandle);
 
 /*
  * Function	: This function is called to enable or disable the I2C peripheral
